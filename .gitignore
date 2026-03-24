@@ -1,0 +1,12 @@
+*.h5ad
+.ipynb_checkpoints/
+*.npz
+*.pcl
+__pycache__/
+data/max_aggregation_models/
+data/attention_aggregation_models/
+data/gated_attention_aggregation_models/
+data/hyper_optimization_runs/
+*.torch
+*.txt
+*.png
