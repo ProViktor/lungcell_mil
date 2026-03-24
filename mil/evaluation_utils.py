@@ -4,7 +4,12 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from sklearn.metrics import balanced_accuracy_score, confusion_matrix
+from sklearn.metrics import (
+    balanced_accuracy_score,
+    confusion_matrix,
+    precision_score,
+    recall_score,
+)
 
 from mil.CellsData import CellsData
 
@@ -35,6 +40,10 @@ def evaluate_accuracy(
     print(f"Accuracy: {acc:.2f}%")
     bal_acc = balanced_accuracy_score(y_true, preds) * 100
     print(f"Balanced Accuracy: {bal_acc:.2f}%")
+    precision = precision_score(y_true, preds, average="macro", zero_division=0) * 100
+    print(f"Precision: {precision:.2f}%")
+    recall = recall_score(y_true, preds, average="macro", zero_division=0) * 100
+    print(f"Recall: {recall:.2f}%")
 
     cm = confusion_matrix(y_true, preds)
     s = cm.sum(axis=1)

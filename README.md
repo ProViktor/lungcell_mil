@@ -1,5 +1,6 @@
 # MIL
 Multiple instance learning project for TUM DL seminar WS 23/24
+This project tries to predict whether a patient did or did not have covid based on the gene expressions in their lung cells.
 
 <b>Project assignee:</b> Viktor Prochazka (ProViktor)
 
@@ -7,7 +8,7 @@ Multiple instance learning project for TUM DL seminar WS 23/24
 
 <b>Data:</b> `hlca_subset.h5ad`
 
-This is a subset of the dataset available <a href = 'https://www.nature.com/articles/s41591-023-02327-2'> here </a>. Indices used in the subset are stored??
+This is a subset of the dataset available <a href = 'https://www.nature.com/articles/s41591-023-02327-2'> here </a>.
 
 <b>Meta about split:</b> `dataset_meta.pcl`
 
@@ -23,5 +24,5 @@ This is a subset of the dataset available <a href = 'https://www.nature.com/arti
 
 * Observation: CSR tensors loose precision, use COO whenever you can
 * Default torch loaders do not support tensors of differnt lengths, custom loader is implemented, all of the code is adjusted to work with the custom dataloader
-![Max aggregation train loss](train_loss.png) 
 * Max aggregation is not very useful.
+![Max aggregation train loss](train_loss.png) 
