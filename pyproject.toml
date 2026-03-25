@@ -3,7 +3,7 @@ name = "mil"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "anndata>=0.12.6",
     "bayesian-optimization>=3.2.1",
@@ -13,12 +13,22 @@ dependencies = [
     "scikit-learn>=1.8.0",
     "scipy>=1.17.1",
     "seaborn>=0.13.2",
-    "torch>=2.11.0",
+    "torch==2.11",
+    "torchvision",
 ]
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["mil"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-gpu" }
+torchvision = { index = "pytorch-gpu" }
+
+[[tool.uv.index]]
+name = "pytorch-gpu"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true

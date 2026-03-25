@@ -64,19 +64,11 @@ class MaxAggergation(Module):
         if post_process:
             self.post = nn.Sequential(
                 nn.Linear(in_features=encoding_size, out_features=2),
-                #nn.ReLU(),
-                #nn.Linear(in_features=10, out_features=10),
-                #nn.ReLU(),
-                #nn.Linear(in_features=10, out_features=2),
-                #nn.ReLU(),
                 nn.Softmax(dim=0),
             )
         else:
             self.post = nn.Identity
     def forward(self, bag_encoding):
-        
-        #max_aggregation = torch.max(bag_encoding, dim = 0)
-        #max_elements, max_indices = bag_encoding.max(dim = 0)
 
         #mean aggregation
         max_elements = torch.mean(bag_encoding, dim = 0)
@@ -99,11 +91,6 @@ class AttentionAggregation(Module):
 
         self.decision = nn.Sequential(
             nn.Linear(in_features=encoding_size, out_features=2),
-            #nn.ReLU(),
-            #nn.Linear(in_features=10, out_features=10),
-            #nn.ReLU(),
-            #nn.Linear(in_features=10, out_features=2),
-            #nn.ReLU(),
             nn.Softmax(dim=0),
         )
 
@@ -144,11 +131,6 @@ class GatedAttentionAggregation(Module):
 
         self.decision = nn.Sequential(
             nn.Linear(in_features=encoding_size, out_features=2),
-            #nn.ReLU(),
-            #nn.Linear(in_features=10, out_features=10),
-            #nn.ReLU(),
-            #nn.Linear(in_features=10, out_features=2),
-            #nn.ReLU(),
             nn.Softmax(dim=0),
         )
 
