@@ -1,9 +1,12 @@
 from typing import Tuple, Dict
+from pathlib import Path
 import numpy as np
 import torch
 from torch.nn import Module
 from mil.CustomDataloader import CustomLoader
 from torch.nn import BCELoss
+
+import wandb
 
 
 def get_sub_dataset(dataset, indices):
@@ -201,7 +204,7 @@ def model_run(
     save_path_prefix: str,
     ax=None,
     plot_title=None,
-    verbose=True,
+    save_weights=False,
     device=None,
     sparse=True,
 ) -> Tuple[list, list, int]:
@@ -216,12 +219,15 @@ def model_run(
         optimizer (_type_): optimizer which computes parameter updates
         num_epochs (int): number of epochs to train for
         ax (_type_, optional): Matplotlib axis to plot loss curves on. If None, no plots are shown. Defaults to None.
-        verbose (bool, optional): If to print epoch losses. Defaults to True.
+        save_weights (bool, optional): If to save model weights in each step. Defaults to False.
         device (_type_, optional): Device to train model on. If None, cuda is selected if available. Defaults to None.
 
     Returns:
         Tuple[list, list, int]: (train_loss_history, validation_loss_history, epoch_min)
     """
+    wandb.login()
+    wandb.init(project="lungcell_mil")
+
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
@@ -239,19 +245,19 @@ def model_run(
 
         train_loss_history.append(train_loss)
         valid_loss_history.append(valid_loss)
-        if verbose:
-            from pathlib import Path
 
+        wandb.log(
+            {"train_loss": train_loss, "val_loss": valid_loss, "epoch": epoch + 1}
+        )
+
+        if save_weights:
             Path(save_path_prefix).parent.mkdir(parents=True, exist_ok=True)
-            print(
-                f"Epoch {epoch + 1}/{num_epochs}, Train Loss: {train_loss:.4f}, Validation Loss: {valid_loss:.4f}"
-            )
             torch.save(model, f"{save_path_prefix}{epoch}.torch")
 
     history_array = np.array(valid_loss_history)
     m = np.min(history_array)
     epoch_min = np.argmin(valid_loss_history)
-    if verbose:
+    if save_weights:
         print(f"Min valid loss: Epoch {epoch_min + 1}, {m:.4f}")
 
     if ax is not None:
@@ -264,4 +270,5 @@ def model_run(
         ax.legend()
         ax.axvline(epoch_min + 1, color="r", linestyle=":")
 
+    wandb.finish()
     return train_loss_history, valid_loss_history, epoch_min

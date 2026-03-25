@@ -130,7 +130,7 @@ class OptimizeHyper:
             ),
             ax=ax,
             plot_title="Training of MIL Classifier with Max Aggregation",
-            verbose=verbose,
+            save_weights=verbose,
             sparse=sparse,
         )
 

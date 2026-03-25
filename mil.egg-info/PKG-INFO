@@ -14,3 +14,6 @@ Requires-Dist: torch==2.5.1
 Requires-Dist: torchvision
 Requires-Dist: torch-scatter
 Requires-Dist: torch-geometric
+Requires-Dist: wandb>=0.25.1
+Requires-Dist: nbformat>=5.10.4
+Requires-Dist: ipykernel>=7.2.0

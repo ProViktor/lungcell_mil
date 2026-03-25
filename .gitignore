@@ -10,3 +10,4 @@ data/hyper_optimization_runs/
 *.torch
 *.txt
 *.png
+notebooks/wandb/*

@@ -15,6 +15,9 @@ dependencies = [
     "torchvision",
     "torch-scatter",
     "torch-geometric",
+    "wandb>=0.25.1",
+    "nbformat>=5.10.4",
+    "ipykernel>=7.2.0",
 ]
 
 [tool.uv.sources]
@@ -34,5 +37,4 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-# This line tells setuptools to ONLY look at the mil folder for code
 packages = ["mil"]

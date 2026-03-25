@@ -22,6 +22,9 @@ class MIL_model(Module):
             bag_classification = bag_classification.squeeze(0)
 
         return bag_classification
+    
+    def get_details(self):
+        return self.instance_encoder._get_details() | self.bag_aggregator._get_details()
 
 
 class MLP_encoder(Module):
@@ -64,17 +67,23 @@ class MLP_encoder(Module):
         bag_encoding = self.instance_encoder(bag)
         return bag_encoding
 
+    def _get_details(self):
+        return {
+            "encoder": "MLP_enxoder",
+            "n_hidden": self.n_hidden,
+            "hidden_size": self.hidden_size,
+            "input_size": self.input_size
+        }
+
 
 class MeanAggergation(Module):
-    def __init__(self, post_process=True, encoding_size=40) -> None:
+    def __init__(self, encoding_size=40) -> None:
         super().__init__()
-        if post_process:
-            self.post = nn.Sequential(
-                nn.Linear(in_features=encoding_size, out_features=2),
-                nn.Softmax(dim=1),
-            )
-        else:
-            self.post = nn.Identity()
+        self.encoding_size = encoding_size
+        self.post = nn.Sequential(
+            nn.Linear(in_features=encoding_size, out_features=2),
+            nn.Softmax(dim=1),
+        )
 
     def forward(self, bag_encoding, batch_indices):
         expanded_indices = batch_indices.unsqueeze(-1).expand(-1, bag_encoding.size(1))
@@ -94,18 +103,22 @@ class MeanAggergation(Module):
         )
         final = self.post(mean_elements)
         return final
+    
+    def _get_details(self):
+        return {
+            "aggregator": "MeanAggergation",
+            "encoding_size": self.encoding_size
+        }
 
 
 class MaxAggergation(Module):
-    def __init__(self, post_process=True, encoding_size=40) -> None:
+    def __init__(self, encoding_size=40) -> None:
         super().__init__()
-        if post_process:
-            self.post = nn.Sequential(
-                nn.Linear(in_features=encoding_size, out_features=2),
-                nn.Softmax(dim=1),
-            )
-        else:
-            self.post = nn.Identity()
+        self.encoding_size = encoding_size
+        self.post = nn.Sequential(
+            nn.Linear(in_features=encoding_size, out_features=2),
+            nn.Softmax(dim=1),
+        )
 
     def forward(self, bag_encoding, batch_indices):
         expanded_indices = batch_indices.unsqueeze(-1).expand(-1, bag_encoding.size(1))
@@ -125,11 +138,20 @@ class MaxAggergation(Module):
         )
         final = self.post(max_elements)
         return final
+    
+    def _get_details(self):
+        return {
+            "aggregator": "MaxAggregation",
+            "encoding_size": self.encoding_size
+        }
 
 
 class AttentionAggregation(Module):
     def __init__(self, encoding_size, attention_hidden_size) -> None:
         super().__init__()
+        self.encoding_size = encoding_size
+        self.attention_hidden_size = attention_hidden_size
+
         self.sigmoid = nn.Sigmoid()
         self.tanh = nn.Tanh()
 
@@ -183,11 +205,21 @@ class AttentionAggregation(Module):
 
         decision = self.decision(bag_sum)
         return decision
+    
+    def _get_details(self):
+        return {
+            "aggregator": "AttentionAggregation",
+            "encoding_size": self.encoding_size,
+            "attention_hidden_size": self.attention_hidden_size
+        }
 
 
 class GatedAttentionAggregation(Module):
     def __init__(self, encoding_size, attention_hidden_size) -> None:
         super().__init__()
+        self.encoding_size = encoding_size
+        self.attention_hidden_size = attention_hidden_size
+
         self.sigmoid = nn.Sigmoid()
         self.tanh = nn.Tanh()
         self.w = nn.Sequential(
@@ -245,3 +277,10 @@ class GatedAttentionAggregation(Module):
 
         decision = self.decision(bag_sum)
         return decision
+
+    def _get_details(self):
+        return {
+            "aggregator": "GatedAttentionAggregation",
+            "encoding_size": self.encoding_size,
+            "attention_hidden_size": self.attention_hidden_size
+        }
