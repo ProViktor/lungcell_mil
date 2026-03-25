@@ -9,11 +9,10 @@ class MIL_model(Module):
         self.instance_encoder = instance_encoder
         self.bag_aggregator = bag_aggregator
 
-
     def forward(self, bag):
         bag_encoding = self.instance_encoder(bag)
         bag_classification = self.bag_aggregator(bag_encoding)
-        
+
         return bag_classification
 
 
@@ -32,7 +31,7 @@ class MLP_encoder(Module):
             nn.Linear(in_features=self.input_size, out_features=self.hidden_size)
         )
         layers.append(nn.ReLU())
-        layers.append(nn.Dropout(p = 0.1))
+        layers.append(nn.Dropout(p=0.1))
 
         # hidden layers
         for i in range(n_hidden - 2):
@@ -40,7 +39,7 @@ class MLP_encoder(Module):
                 nn.Linear(in_features=self.hidden_size, out_features=self.hidden_size)
             )
             layers.append(nn.ReLU())
-            layers.append(nn.Dropout(p = 0.1))
+            layers.append(nn.Dropout(p=0.1))
 
         # last layer - does not use ReLU
         layers.append(nn.Linear(in_features=self.hidden_size, out_features=output_size))
@@ -58,8 +57,8 @@ class MLP_encoder(Module):
         return bag_encoding
 
 
-class MaxAggergation(Module):
-    def __init__(self, post_process = True, encoding_size = 40) -> None:
+class MeanAggergation(Module):
+    def __init__(self, post_process=True, encoding_size=40) -> None:
         super().__init__()
         if post_process:
             self.post = nn.Sequential(
@@ -68,10 +67,26 @@ class MaxAggergation(Module):
             )
         else:
             self.post = nn.Identity
-    def forward(self, bag_encoding):
 
-        #mean aggregation
-        max_elements = torch.mean(bag_encoding, dim = 0)
+    def forward(self, bag_encoding):
+        mean_elements = torch.mean(bag_encoding, dim=0)
+        final = self.post(mean_elements)
+        return final
+
+
+class MaxAggergation(Module):
+    def __init__(self, post_process=True, encoding_size=40) -> None:
+        super().__init__()
+        if post_process:
+            self.post = nn.Sequential(
+                nn.Linear(in_features=encoding_size, out_features=2),
+                nn.Softmax(dim=0),
+            )
+        else:
+            self.post = nn.Identity
+
+    def forward(self, bag_encoding):
+        max_elements = torch.max(bag_encoding, dim=0)[0]
         final = self.post(max_elements)
         return final
 
@@ -106,7 +121,6 @@ class AttentionAggregation(Module):
 
         alphas = torch.exp(self.w.forward(v_multiplied))
         alphas = alphas / torch.sum(alphas)
-        
 
         bag_sum = torch.sum(alphas * bag_encoding, dim=0)
         decision = self.decision(bag_sum)
@@ -134,7 +148,6 @@ class GatedAttentionAggregation(Module):
             nn.Softmax(dim=0),
         )
 
-
         for module in (self.w, self.V, self.U, self.decision):
             for layer in module:
                 if hasattr(layer, "weight"):
@@ -143,12 +156,10 @@ class GatedAttentionAggregation(Module):
                     )
 
     def forward(self, bag_encoding):
-        # bag = bag.to_dense()
-
         query = self.tanh(self.V.forward(bag_encoding))
         gate = self.sigmoid(self.U.forward(bag_encoding))
 
-        alphas = torch.exp(self.w.forward(query*gate))
+        alphas = torch.exp(self.w.forward(query * gate))
         alphas = alphas / torch.sum(alphas)
 
         bag_sum = torch.sum(alphas * bag_encoding, dim=0)
