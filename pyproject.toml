@@ -1,9 +1,7 @@
 [project]
 name = "mil"
 version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "anndata>=0.12.6",
     "bayesian-optimization>=3.2.1",
@@ -13,22 +11,28 @@ dependencies = [
     "scikit-learn>=1.8.0",
     "scipy>=1.17.1",
     "seaborn>=0.13.2",
-    "torch==2.11",
+    "torch==2.5.1",
     "torchvision",
+    "torch-scatter",
+    "torch-geometric",
 ]
+
+[tool.uv.sources]
+torch = { index = "pytorch-gpu" }
+torchvision = { index = "pytorch-gpu" }
+
+[tool.uv.extra-build-dependencies]
+torch-scatter = ["torch==2.5.1"]
+
+[[tool.uv.index]]
+name = "pytorch-gpu"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
+# This line tells setuptools to ONLY look at the mil folder for code
 packages = ["mil"]
-
-[tool.uv.sources]
-torch = { index = "pytorch-gpu" }
-torchvision = { index = "pytorch-gpu" }
-
-[[tool.uv.index]]
-name = "pytorch-gpu"
-url = "https://download.pytorch.org/whl/cu126"
-explicit = true

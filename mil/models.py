@@ -9,9 +9,17 @@ class MIL_model(Module):
         self.instance_encoder = instance_encoder
         self.bag_aggregator = bag_aggregator
 
-    def forward(self, bag):
+    def forward(self, bag, batch_indices=None):
         bag_encoding = self.instance_encoder(bag)
-        bag_classification = self.bag_aggregator(bag_encoding)
+        is_single_bag = batch_indices is None
+        if is_single_bag:
+            batch_indices = torch.zeros(
+                bag_encoding.size(0), dtype=torch.long, device=bag_encoding.device
+            )
+        bag_classification = self.bag_aggregator(bag_encoding, batch_indices)
+
+        if is_single_bag:
+            bag_classification = bag_classification.squeeze(0)
 
         return bag_classification
 
@@ -63,13 +71,27 @@ class MeanAggergation(Module):
         if post_process:
             self.post = nn.Sequential(
                 nn.Linear(in_features=encoding_size, out_features=2),
-                nn.Softmax(dim=0),
+                nn.Softmax(dim=1),
             )
         else:
-            self.post = nn.Identity
+            self.post = nn.Identity()
 
-    def forward(self, bag_encoding):
-        mean_elements = torch.mean(bag_encoding, dim=0)
+    def forward(self, bag_encoding, batch_indices):
+        expanded_indices = batch_indices.unsqueeze(-1).expand(-1, bag_encoding.size(1))
+        num_bags = batch_indices.max() + 1
+        out = torch.zeros(
+            num_bags,
+            bag_encoding.size(1),
+            dtype=bag_encoding.dtype,
+            device=bag_encoding.device,
+        )
+        mean_elements = out.scatter_reduce_(
+            dim=0,
+            index=expanded_indices,
+            src=bag_encoding,
+            reduce="mean",
+            include_self=False,
+        )
         final = self.post(mean_elements)
         return final
 
@@ -80,13 +102,27 @@ class MaxAggergation(Module):
         if post_process:
             self.post = nn.Sequential(
                 nn.Linear(in_features=encoding_size, out_features=2),
-                nn.Softmax(dim=0),
+                nn.Softmax(dim=1),
             )
         else:
-            self.post = nn.Identity
+            self.post = nn.Identity()
 
-    def forward(self, bag_encoding):
-        max_elements = torch.max(bag_encoding, dim=0)[0]
+    def forward(self, bag_encoding, batch_indices):
+        expanded_indices = batch_indices.unsqueeze(-1).expand(-1, bag_encoding.size(1))
+        num_bags = batch_indices.max() + 1
+        out = torch.zeros(
+            num_bags,
+            bag_encoding.size(1),
+            dtype=bag_encoding.dtype,
+            device=bag_encoding.device,
+        )
+        max_elements = out.scatter_reduce_(
+            dim=0,
+            index=expanded_indices,
+            src=bag_encoding,
+            reduce="amax",
+            include_self=False,
+        )
         final = self.post(max_elements)
         return final
 
@@ -106,7 +142,7 @@ class AttentionAggregation(Module):
 
         self.decision = nn.Sequential(
             nn.Linear(in_features=encoding_size, out_features=2),
-            nn.Softmax(dim=0),
+            nn.Softmax(dim=1),
         )
 
         for module in (self.w, self.V, self.decision):
@@ -116,13 +152,35 @@ class AttentionAggregation(Module):
                         layer.weight, a=0, mode="fan_in", nonlinearity="relu"
                     )
 
-    def forward(self, bag_encoding):
+    def forward(self, bag_encoding, batch_indices):
         v_multiplied = self.tanh(self.V.forward(bag_encoding))
 
         alphas = torch.exp(self.w.forward(v_multiplied))
-        alphas = alphas / torch.sum(alphas)
 
-        bag_sum = torch.sum(alphas * bag_encoding, dim=0)
+        expanded_indices = batch_indices.unsqueeze(-1).expand(-1, alphas.size(1))
+        num_bags = batch_indices.max() + 1
+        sum_alphas = torch.zeros(
+            num_bags, alphas.size(1), dtype=alphas.dtype, device=alphas.device
+        ).scatter_reduce_(
+            dim=0, index=expanded_indices, src=alphas, reduce="sum", include_self=False
+        )
+        alphas = alphas / sum_alphas[batch_indices]
+
+        weighted_bag = alphas * bag_encoding
+        bag_sum_indices = batch_indices.unsqueeze(-1).expand(-1, bag_encoding.size(1))
+        bag_sum = torch.zeros(
+            num_bags,
+            bag_encoding.size(1),
+            dtype=bag_encoding.dtype,
+            device=bag_encoding.device,
+        ).scatter_reduce_(
+            dim=0,
+            index=bag_sum_indices,
+            src=weighted_bag,
+            reduce="sum",
+            include_self=False,
+        )
+
         decision = self.decision(bag_sum)
         return decision
 
@@ -145,7 +203,7 @@ class GatedAttentionAggregation(Module):
 
         self.decision = nn.Sequential(
             nn.Linear(in_features=encoding_size, out_features=2),
-            nn.Softmax(dim=0),
+            nn.Softmax(dim=1),
         )
 
         for module in (self.w, self.V, self.U, self.decision):
@@ -155,13 +213,35 @@ class GatedAttentionAggregation(Module):
                         layer.weight, a=0, mode="fan_in", nonlinearity="relu"
                     )
 
-    def forward(self, bag_encoding):
+    def forward(self, bag_encoding, batch_indices):
         query = self.tanh(self.V.forward(bag_encoding))
         gate = self.sigmoid(self.U.forward(bag_encoding))
 
         alphas = torch.exp(self.w.forward(query * gate))
-        alphas = alphas / torch.sum(alphas)
 
-        bag_sum = torch.sum(alphas * bag_encoding, dim=0)
+        expanded_indices = batch_indices.unsqueeze(-1).expand(-1, alphas.size(1))
+        num_bags = batch_indices.max() + 1
+        sum_alphas = torch.zeros(
+            num_bags, alphas.size(1), dtype=alphas.dtype, device=alphas.device
+        ).scatter_reduce_(
+            dim=0, index=expanded_indices, src=alphas, reduce="sum", include_self=False
+        )
+        alphas = alphas / sum_alphas[batch_indices]
+
+        weighted_bag = alphas * bag_encoding
+        bag_sum_indices = batch_indices.unsqueeze(-1).expand(-1, bag_encoding.size(1))
+        bag_sum = torch.zeros(
+            num_bags,
+            bag_encoding.size(1),
+            dtype=bag_encoding.dtype,
+            device=bag_encoding.device,
+        ).scatter_reduce_(
+            dim=0,
+            index=bag_sum_indices,
+            src=weighted_bag,
+            reduce="sum",
+            include_self=False,
+        )
+
         decision = self.decision(bag_sum)
         return decision

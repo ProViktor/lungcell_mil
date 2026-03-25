@@ -31,6 +31,7 @@ def evaluate_accuracy(
         y_true.append(y.detach().numpy())
 
     preds = np.array(preds)
+    preds = preds.reshape(preds.shape[0], -1)
     preds = np.argmax(preds, axis=1)
     y_true = np.array(y_true)
     y_true = np.argmax(y_true, axis=1)

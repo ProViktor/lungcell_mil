@@ -111,18 +111,32 @@ def train(
         bag_key = "bag_embed"
 
     for batch in dataloader.batches():
-        batch_loss = torch.zeros(1).to(device)
         optimizer.zero_grad()
-        for data_dict in batch:
-            bag_input = data_dict[bag_key].to(device)
-            target = data_dict["y"].to(device)
-            output = model.forward(bag_input)
-            item_loss = criterion(output, target)
-            batch_loss += item_loss
+
+        bag_tensors = []
+        targets = []
+        batch_indices = []
+
+        for idx, data_dict in enumerate(batch):
+            bag = data_dict[bag_key].to(device)
+            bag_tensors.append(bag)
+            targets.append(data_dict["y"].to(device))
+            batch_indices.append(
+                torch.full((bag.shape[0],), idx, dtype=torch.long, device=device)
+            )
+
+        batch_bag = torch.cat(bag_tensors, dim=0)
+        batch_indices = torch.cat(batch_indices, dim=0)
+        batch_targets = torch.stack(targets, dim=0)
+
+        output = model.forward(batch_bag, batch_indices)
+
+        batch_loss = criterion(output, batch_targets) * len(batch)
 
         batch_loss.backward()
         optimizer.step()
         running_loss += batch_loss.item()
+
     epoch_loss = running_loss / len(dataloader.dataset)
     return epoch_loss
 
@@ -152,17 +166,27 @@ def evaluate(model: Module, dataloader: CustomLoader, criterion, device, sparse=
 
     with torch.no_grad():
         for batch in dataloader.batches():
-            batch_loss = torch.zeros(1).to(device)
+            bag_tensors = []
+            targets = []
+            batch_indices = []
 
-            for data_dict in batch:
-                bag_input = data_dict[bag_key].to(device)
-                target = data_dict["y"].to(device)
+            for idx, data_dict in enumerate(batch):
+                bag = data_dict[bag_key].to(device)
+                bag_tensors.append(bag)
+                targets.append(data_dict["y"].to(device))
+                batch_indices.append(
+                    torch.full((bag.shape[0],), idx, dtype=torch.long, device=device)
+                )
 
-                output = model.forward(bag_input)
-                item_loss = criterion(output, target)
-                batch_loss += item_loss
+            batch_bag = torch.cat(bag_tensors, dim=0)
+            batch_indices = torch.cat(batch_indices, dim=0)
+            batch_targets = torch.stack(targets, dim=0)
+
+            output = model.forward(batch_bag, batch_indices)
+            batch_loss = criterion(output, batch_targets) * len(batch)
 
             running_loss += batch_loss.item()
+
     epoch_loss = running_loss / len(dataloader.dataset)
     return epoch_loss
 
