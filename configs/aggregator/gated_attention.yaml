@@ -1,8 +1,0 @@
-aggregator: GatedAttentionAggregation
-pbounds:
-  hidden_size: [2, 50.5]
-  n_hidden: [1, 3.5]
-  encoding_size: [2, 50.5]
-  attention_hidden_size: [2, 50.5]
-  log_learning_rate: [-4, -1]
-  log_decay: [-3, 1]
