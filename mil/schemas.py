@@ -1,4 +1,4 @@
-from typing import Optional, Literal
+from typing import Optional, Literal, Dict, Tuple
 from pydantic import BaseModel, Field, model_validator
 import json
 
@@ -32,3 +32,23 @@ class RunParams(BaseModel):
     def save_json(self, path: str):
         with open(path, "w") as f:
             f.write(self.model_dump_json(indent=4))
+
+
+class HyperRunParams(BaseModel):
+    aggregator: Literal[
+        "MeanAggergation",
+        "MaxAggergation",
+        "AttentionAggregation",
+        "GatedAttentionAggregation",
+    ]
+    use_cv: bool = True
+    sparse: bool = True
+    n_epochs: int = 30
+    c_mae_penalize: float = 0.0
+    note: str = ""
+    init_points: int = 10
+    n_iter: int = 10
+    random_state: int = 0
+    pbounds: Dict[str, Tuple[float, float]]
+    k_cv: int = 5
+    seeds: Tuple[int, ...] = (0, 37, 42)

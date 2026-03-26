@@ -9,11 +9,13 @@ from mil.CellsData import CellsData
 from mil.CustomDataloader import CustomLoader
 
 from mil.training_utils import model_run, set_seed, stratified_cv_split
-from mil.schemas import RunParams
+from mil.schemas import RunParams, HyperRunParams
+from functools import partial
 
 from mil.models import (
     MIL_model,
     MLP_encoder,
+    MeanAggergation,
     MaxAggergation,
     AttentionAggregation,
     GatedAttentionAggregation,
@@ -24,9 +26,10 @@ from mil import PROJECT_ROOT
 from bayes_opt import BayesianOptimization
 
 import yaml
-import ast
+import json
+from pathlib import Path
 from datetime import datetime
-from typing import Tuple, Union
+from typing import Tuple, Union, Optional
 from itertools import chain
 
 
@@ -37,7 +40,7 @@ class OptimizeHyper:
         sparse=True,
         n_epochs=50,
         k_cv=5,
-        c_std_penalize=0,
+        c_mae_penalize=0,
         note="0",
     ) -> None:
         if seeds is None:
@@ -56,113 +59,114 @@ class OptimizeHyper:
         self.validation_set = CellsData(split="val")
 
         self.k_cv = k_cv
-        self.c_std_penalize = c_std_penalize
+        self.c_mae_penalize = c_mae_penalize
         self.note = note
+
+    def run_search(self, params: HyperRunParams):
+        """Re-configures the instance and runs the hyperparameter search."""
+        self.sparse = params.sparse
+        self.n_epochs = params.n_epochs
+        self.k_cv = params.k_cv
+        self.c_mae_penalize = params.c_mae_penalize
+        self.note = params.note
+        self.seeds = params.seeds
+
+        if self.sparse:
+            self.input_size = 2000
+        else:
+            self.input_size = 30
+
+        if params.use_cv:
+            f_to_maximize = partial(self.test_model_cv, aggregator=params.aggregator)
+        else:
+            f_to_maximize = partial(self.test_model, aggregator=params.aggregator)
+
+        self.run_optimizer(
+            f_to_maximize=f_to_maximize,
+            pbounds=params.pbounds,
+            init_points=params.init_points,
+            n_iter=params.n_iter,
+            random_state=params.random_state,
+        )
+
+    def _params_to_settings(self, params: RunParams) -> dict:
+        """Converts RunParams to the settings dictionary required for model instantiation."""
+        aggregator_classes = {
+            "MaxAggergation": MaxAggergation,
+            "AttentionAggregation": AttentionAggregation,
+            "GatedAttentionAggregation": GatedAttentionAggregation,
+            "MeanAggergation": MeanAggergation,
+        }
+        agg_class = aggregator_classes[params.aggregator]
+
+        agg_settings = {"encoding_size": params.encoding_size}
+        if params.aggregator in ["AttentionAggregation", "GatedAttentionAggregation"]:
+            agg_settings["attention_hidden_size"] = params.attention_hidden_size
+
+        return {
+            "encoder": MLP_encoder,
+            "encoder_settings": {
+                "n_hidden": params.n_hidden,
+                "hidden_size": params.hidden_size,
+                "output_size": params.encoding_size,
+                "input_size": self.input_size,
+            },
+            "aggregator": agg_class,
+            "aggregator_settings": agg_settings,
+        }
 
     def model_test(
         self,
-        encoder: nn.Module,
-        encoder_settings: dict,
-        aggregator: nn.Module,
-        aggregator_settings: dict,
-        learning_rate: float = 0.001,
-        decay: float = 0.01,
-        seed: int = 37,
-        verbose: bool = False,
-        sparse: bool = True,
+        run_params: RunParams,
         train_set=None,
         validation_set=None,
-    ):
-        """Constructs a MIL model from encoder and aggregator and trains it.
-        Returns the lowest loss on the validation dataset
-
-        Args:
-            encoder (nn.Module): Bag instance encoder class
-            encoder_settings (dict): Hyperparameter settings to instantiate the encoder model.
-            aggregator (nn.module): Aggregator model class
-            aggregator_settings (dict): Hyperparameter settings to instantiate the aggregator model.
-            learning_rate (float, optional): Learning rate for the optimizer to use. Defaults to 0.001.
-            decay (float, optional): Weight decay (reguralization) for the optimizer to use. Defaults to 0.01.
-            seed (int, optional): Random seed for model initialization. Defaults to 37.
-            verbose (bool, optional): Verbosity. Defaults to False.
-            sparse (bool, optional): If the model should use the sparse data in the HLCA dataset. Defaults to True.
-
-        Returns:
-            float: minimal loss on the validation dataset
-        """
-
+        verbose: bool = False,
+    ) -> float:
+        """Constructs a MIL model from run_params and trains it."""
         if train_set is None:
             train_set = self.train_set
         if validation_set is None:
             validation_set = self.validation_set
 
-        set_seed(seed)
+        set_seed(run_params.seed)
 
-        encoder_model = encoder(**encoder_settings)
-        aggregator_model = aggregator(**aggregator_settings)
+        settings = self._params_to_settings(run_params)
+        encoder_model = settings["encoder"](**settings["encoder_settings"])
+        aggregator_model = settings["aggregator"](**settings["aggregator_settings"])
 
         model = MIL_model(
             instance_encoder=encoder_model, bag_aggregator=aggregator_model
         )
         criterion = nn.BCELoss()
-        optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=decay)
-
-        num_epochs = self.n_epochs
+        optimizer = optim.Adam(
+            model.parameters(), lr=run_params.lr, weight_decay=run_params.decay
+        )
 
         train_loader = CustomLoader(train_set, batchsize=20)
         validation_loader = CustomLoader(validation_set, batchsize=20)
+
+        ax = None
         if verbose:
-            fig, ax = plt.subplots()
+            _, ax = plt.subplots()
 
-        if not verbose:
-            ax = None
-
-        run_params = RunParams(
-            aggregator=aggregator.__name__,
-            n_hidden=encoder_settings["n_hidden"],
-            hidden_size=encoder_settings["hidden_size"],
-            encoding_size=encoder_settings["output_size"],
-            seed=seed,
-            lr=learning_rate,
-            decay=decay,
-            attention_hidden_size=aggregator_settings.get("attention_hidden_size"),
-            sparse=sparse,
-            num_epochs=num_epochs,
-        )
-
-        train_loss, valid_loss, best_epoch = model_run(
+        _, valid_loss, best_epoch = model_run(
             model=model,
             train_loader=train_loader,
             validation_loader=validation_loader,
             criterion=criterion,
             optimizer=optimizer,
-            num_epochs=num_epochs,
+            num_epochs=run_params.num_epochs,
             save_path_prefix=str(
                 PROJECT_ROOT / "data" / "max_aggregation_models" / "epoch_"
             ),
             ax=ax,
-            plot_title="Training of MIL Classifier with Max Aggregation",
+            plot_title=f"Training of MIL Classifier with {run_params.aggregator}",
             save_weights=verbose,
-            sparse=sparse,
+            sparse=run_params.sparse,
             run_params=run_params.model_dump(),
         )
 
-        # classic loss
-        min_loss = valid_loss[best_epoch]
-
-        # smoothened loss
-        n = len(valid_loss)
-        """
-        smooth = []
-        smooth_k = 3
-        for i in range(n-smooth_k):
-            sub_range = valid_loss[i: i+smooth_k]
-            smooth.append(np.mean(sub_range))
-        
-        min_loss = np.min(smooth)
-        """
-
-        return min_loss
+        return valid_loss[best_epoch]
 
     def run_optimizer(
         self,
@@ -189,7 +193,37 @@ class OptimizeHyper:
             random_state (int, optional): Random seed. Defaults to 0.
         """
 
-        print(f"Maximizing {f_to_maximize.__name__}")
+        f_name = (
+            f_to_maximize.func.__name__
+            if hasattr(f_to_maximize, "func")
+            else f_to_maximize.__name__
+        )
+
+        print(f"Maximizing {f_name}")
+
+        now = datetime.now()
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
+        run_dir = PROJECT_ROOT / "runs" / "hyper_optim" / f"run_{timestamp}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        # Log search metadata
+        metadata = {
+            "f_name": f_name,
+            "pbounds": pbounds,
+            "init_points": init_points,
+            "n_iter": n_iter,
+            "random_state": random_state,
+            "optimize_hyper_settings": {
+                "seeds": self.seeds,
+                "sparse": self.sparse,
+                "n_epochs": self.n_epochs,
+                "k_cv": self.k_cv,
+                "c_mae_penalize": self.c_mae_penalize,
+                "note": self.note,
+            },
+        }
+        with open(run_dir / "search_metadata.json", "w") as f:
+            json.dump(metadata, f, indent=4)
 
         optimizer = BayesianOptimization(
             f=f_to_maximize,
@@ -207,31 +241,54 @@ class OptimizeHyper:
 
         best_seed = f_to_maximize(**best_config["params"], seed_search=True)
 
+        # Log best run params
+        best_params_dict = best_config["params"].copy()
+        if hasattr(f_to_maximize, "keywords"):
+            best_params_dict.update(f_to_maximize.keywords)
+
+        best_run_params = self._kwargs_to_run_params(best_params_dict)
+        best_run_params.seed = best_seed
+        best_run_params.save_json(str(run_dir / "best_run_params.json"))
+
         p_bounds_str = dict()
         for key, value in pbounds.items():
             p_bounds_str[key] = str(value)
         settings = yaml.dump(p_bounds_str)
 
         super_settings = dict()
-        for attr in ("seeds", "sparse", "n_epochs", "k_cv", "c_std_penalize", "note"):
+        for attr in ("seeds", "sparse", "n_epochs", "k_cv", "c_mae_penalize", "note"):
             super_settings[attr] = getattr(self, attr)
 
         super_settings = yaml.dump(super_settings)
 
-        config_dict = ast.literal_eval(str(best_config))
+        # Convert best_config to native types for YAML dumping
+        def sanitize(obj):
+            if isinstance(obj, dict):
+                return {k: sanitize(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [sanitize(v) for v in obj]
+            elif isinstance(obj, np.generic):
+                return obj.item()
+            return obj
+
+        config_dict = sanitize(best_config)
         result = yaml.dump(config_dict)
 
         now = datetime.now()
         time = now.strftime("%Y-%m-%d %H:%M:%S")
 
-        f_name = f_to_maximize.__name__
+        f_name = (
+            f_to_maximize.func.__name__
+            if hasattr(f_to_maximize, "func")
+            else f_to_maximize.__name__
+        )
 
         doc_string = f"{time}\n\nf: {f_name}\n{super_settings}\n\nn_iter: {n_iter} \ninit_points: {init_points} \n{settings}\nnseed: {best_seed}\nsparse:{self.sparse}\nn_epochs:{self.n_epochs}\n{result}"
         print(doc_string)
 
         doc_string = doc_string + "\n ---------------------------------\n"
         for el in optimizer.res:
-            doc_string = f"{doc_string}\n{el}"
+            doc_string = f"{doc_string}\n{sanitize(el)}"
 
         path_prefix = PROJECT_ROOT / "data" / "hyper_optimization_runs"
         path_prefix.mkdir(parents=True, exist_ok=True)
@@ -241,21 +298,60 @@ class OptimizeHyper:
         with open(path_prefix / file_name, "w") as f:
             f.write(doc_string)
 
-    def test_model(self, settings, seed_search=False):
+        # Also save to the run directory
+        with open(run_dir / "summary.txt", "w") as f:
+            f.write(doc_string)
+
+    def _kwargs_to_run_params(self, kwargs: dict) -> RunParams:
+        """Converts float kwargs from Bayesian Optimization to a RunParams instance."""
+        params_dict = kwargs.copy()
+
+        # Handle log-scale transformations
+        if "log_learning_rate" in params_dict:
+            params_dict["lr"] = 10 ** params_dict.pop("log_learning_rate")
+        if "log_decay" in params_dict:
+            params_dict["decay"] = 10 ** params_dict.pop("log_decay")
+
+        # Round numeric values and update
+        int_keys = ["n_hidden", "hidden_size", "encoding_size", "attention_hidden_size"]
+        for k in int_keys:
+            if k in params_dict and params_dict[k] is not None:
+                params_dict[k] = int(np.floor(params_dict[k]))
+
+        # Add class-level defaults if missing
+        params_dict.setdefault("sparse", self.sparse)
+        params_dict.setdefault("num_epochs", self.n_epochs)
+        params_dict.setdefault("seed", 0)  # Placeholder
+
+        # Provide sensible defaults for RunParams required fields if not present
+        params_dict.setdefault("n_hidden", 3)
+        params_dict.setdefault("hidden_size", 15)
+        params_dict.setdefault("encoding_size", 10)
+        params_dict.setdefault("lr", 0.001)
+        params_dict.setdefault("decay", 0.01)
+
+        if params_dict.get("aggregator") in [
+            "AttentionAggregation",
+            "GatedAttentionAggregation",
+        ]:
+            params_dict.setdefault("attention_hidden_size", 10)
+
+        return RunParams(**params_dict)
+
+    def test_model(self, seed_search=False, **kwargs):
+        run_params = self._kwargs_to_run_params(kwargs)
         losses_and_seeds = []
         for seed in self.seeds:
-            settings["seed"] = seed
-            loss = self.model_test(**settings)
+            run_params.seed = seed
+            loss = self.model_test(run_params)
             losses_and_seeds.append({"loss": loss, "seed": seed})
         losses_and_seeds.sort(key=lambda x: x["loss"])
-        if seed_search:
-            otp = losses_and_seeds[0]["seed"]
-        else:
-            otp = -losses_and_seeds[0]["loss"]
+        return (
+            losses_and_seeds[0]["seed"] if seed_search else -losses_and_seeds[0]["loss"]
+        )
 
-        return otp
-
-    def test_model_cv(self, settings, seed_search=False, cv_split=5, c_std_penalize=2):
+    def test_model_cv(self, seed_search=False, cv_split=5, c_mae_penalize=2, **kwargs):
+        run_params = self._kwargs_to_run_params(kwargs)
         losses = []
         for seed in self.seeds:
             seed_losses = []
@@ -263,287 +359,23 @@ class OptimizeHyper:
                 dataset=self.train_set, k_cv=cv_split, seed=seed
             )
             for k in range(cv_split):
-                validation_set = []
-                for idx in cv_indices[k]:
-                    validation_set.append(self.train_set[idx])
-
+                validation_set = [self.train_set[idx] for idx in cv_indices[k]]
                 train_set_k = [i for i in range(cv_split) if i != k]
                 train_set_indices = chain(*[cv_indices[i] for i in train_set_k])
-                train_set = []
-                for idx in train_set_indices:
-                    train_set.append(self.train_set[idx])
+                train_set = [self.train_set[idx] for idx in train_set_indices]
 
+                run_params.seed = seed
                 loss = self.model_test(
-                    **settings, train_set=train_set, validation_set=validation_set
+                    run_params=run_params,
+                    train_set=train_set,
+                    validation_set=validation_set,
                 )
                 seed_losses.append(loss)
 
-            mean_loss = np.mean(seed_losses) + c_std_penalize * np.std(seed_losses)
+            # Mean Absolute Error (MAE) around the mean of fold losses
+            mae = np.mean(np.abs(seed_losses - np.mean(seed_losses)))
+            mean_loss = np.mean(seed_losses) + c_mae_penalize * mae
             losses.append({"loss": mean_loss, "seed": seed})
 
         losses.sort(key=lambda x: x["loss"])
-
-        if seed_search:
-            otp = losses[0]["seed"]
-        else:
-            otp = -losses[0]["loss"]
-
-        return otp
-
-    def test_max_model(
-        self,
-        n_hidden=3,
-        hidden_size=15,
-        log_learning_rate=-3.0,
-        log_decay=-2.0,
-        seed_search=False,
-    ):
-        """Returns -minimal_loss (maximization is equivalent to loss minimization)
-
-        Args:
-            n_hidden (int, optional): _description_. Defaults to 3.
-            hidden_size (int, optional): _description_. Defaults to 15.
-            lr (float, optional): _description_. Defaults to 0.001.
-            decay (float, optional): _description_. Defaults to 0.01.
-        """
-        n_hidden = int(np.floor(n_hidden))
-        hidden_size = int(np.floor(hidden_size))
-
-        settings = {
-            "encoder": MLP_encoder,
-            "encoder_settings": {
-                "n_hidden": n_hidden,
-                "hidden_size": hidden_size,
-                "output_size": 1,
-                "input_size": self.input_size,
-            },
-            "aggregator": MaxAggergation,
-            "aggregator_settings": {"use_sigmoid": True},
-            "learning_rate": 10**log_learning_rate,
-            "decay": 10**log_decay,
-            "sparse": self.sparse,
-        }
-
-        otp = self.test_model(settings, seed_search)
-        return otp
-
-    def test_max_model_cv(
-        self,
-        n_hidden=3,
-        hidden_size=15,
-        encoding_size=20,
-        log_learning_rate=-3.0,
-        log_decay=-2.0,
-        seed_search=False,
-    ):
-        """Returns -minimal_loss (maximization is equivalent to loss minimization)
-
-        Args:
-            n_hidden (int, optional): _description_. Defaults to 3.
-            hidden_size (int, optional): _description_. Defaults to 15.
-            lr (float, optional): _description_. Defaults to 0.001.
-            decay (float, optional): _description_. Defaults to 0.01.
-        """
-        n_hidden = int(np.floor(n_hidden))
-        hidden_size = int(np.floor(hidden_size))
-        encoding_size = int(np.floor(encoding_size))
-        settings = {
-            "encoder": MLP_encoder,
-            "encoder_settings": {
-                "n_hidden": n_hidden,
-                "hidden_size": hidden_size,
-                "output_size": encoding_size,
-                "input_size": self.input_size,
-            },
-            "aggregator": MaxAggergation,
-            "aggregator_settings": {
-                "post_process": True,
-                "encoding_size": encoding_size,
-            },
-            "learning_rate": 10**log_learning_rate,
-            "decay": 10**log_decay,
-            "sparse": self.sparse,
-        }
-
-        otp = self.test_model_cv(settings=settings, seed_search=seed_search, cv_split=5)
-        return otp
-
-    def test_attention_model(
-        self,
-        n_hidden=3,
-        hidden_size=15,
-        encoding_size=10,
-        attention_hidden_size=10,
-        log_learning_rate=-3.0,
-        log_decay=-2.0,
-        seed_search=False,
-    ):
-        """Returns -minimal_loss (maximization is equivalent to loss minimization)
-
-        Args:
-            n_hidden (int, optional): _description_. Defaults to 3.
-            hidden_size (int, optional): _description_. Defaults to 15.
-            lr (float, optional): _description_. Defaults to 0.001.
-            decay (float, optional): _description_. Defaults to 0.01.
-        """
-
-        n_hidden = int(np.floor(n_hidden))
-        hidden_size = int(np.floor(hidden_size))
-        encoding_size = int(np.floor(encoding_size))
-        attention_hidden_size = int(np.floor(attention_hidden_size))
-
-        settings = {
-            "encoder": MLP_encoder,
-            "encoder_settings": {
-                "n_hidden": n_hidden,
-                "hidden_size": hidden_size,
-                "output_size": encoding_size,
-                "input_size": self.input_size,
-            },
-            "aggregator": AttentionAggregation,
-            "aggregator_settings": {
-                "encoding_size": encoding_size,
-                "attention_hidden_size": attention_hidden_size,
-            },
-            "learning_rate": 10**log_learning_rate,
-            "decay": 10**log_decay,
-            "sparse": self.sparse,
-        }
-
-        otp = self.test_model_cv(settings=settings, seed_search=seed_search, cv_split=5)
-        return otp
-
-    def test_attention_model_cv(
-        self,
-        n_hidden=3,
-        hidden_size=15,
-        encoding_size=10,
-        attention_hidden_size=10,
-        log_learning_rate=-3.0,
-        log_decay=-2.0,
-        seed_search=False,
-    ):
-        """Returns -minimal_loss (maximization is equivalent to loss minimization)
-
-        Args:
-            n_hidden (int, optional): _description_. Defaults to 3.
-            hidden_size (int, optional): _description_. Defaults to 15.
-            lr (float, optional): _description_. Defaults to 0.001.
-            decay (float, optional): _description_. Defaults to 0.01.
-        """
-
-        n_hidden = int(np.floor(n_hidden))
-        hidden_size = int(np.floor(hidden_size))
-        encoding_size = int(np.floor(encoding_size))
-        attention_hidden_size = int(np.floor(attention_hidden_size))
-
-        settings = {
-            "encoder": MLP_encoder,
-            "encoder_settings": {
-                "n_hidden": n_hidden,
-                "hidden_size": hidden_size,
-                "output_size": encoding_size,
-                "input_size": self.input_size,
-            },
-            "aggregator": AttentionAggregation,
-            "aggregator_settings": {
-                "encoding_size": encoding_size,
-                "attention_hidden_size": attention_hidden_size,
-            },
-            "learning_rate": 10**log_learning_rate,
-            "decay": 10**log_decay,
-            "sparse": self.sparse,
-        }
-
-        otp = self.test_model_cv(settings, seed_search)
-        return otp
-
-    def test_gated_attention_model(
-        self,
-        n_hidden=3,
-        hidden_size=15,
-        encoding_size=10,
-        attention_hidden_size=10,
-        log_learning_rate=-3.0,
-        log_decay=-2.0,
-        seed_search=False,
-    ):
-        """Returns -minimal_loss (maximization is equivalent to loss minimization)
-
-        Args:
-            n_hidden (int, optional): _description_. Defaults to 3.
-            hidden_size (int, optional): _description_. Defaults to 15.
-            lr (float, optional): _description_. Defaults to 0.001.
-            decay (float, optional): _description_. Defaults to 0.01.
-        """
-
-        n_hidden = int(np.floor(n_hidden))
-        hidden_size = int(np.floor(hidden_size))
-        encoding_size = int(np.floor(encoding_size))
-        attention_hidden_size = int(np.floor(attention_hidden_size))
-
-        settings = {
-            "encoder": MLP_encoder,
-            "encoder_settings": {
-                "n_hidden": n_hidden,
-                "hidden_size": hidden_size,
-                "output_size": encoding_size,
-                "input_size": self.input_size,
-            },
-            "aggregator": GatedAttentionAggregation,
-            "aggregator_settings": {
-                "encoding_size": encoding_size,
-                "attention_hidden_size": attention_hidden_size,
-            },
-            "learning_rate": 10**log_learning_rate,
-            "decay": 10**log_decay,
-            "sparse": self.sparse,
-        }
-
-        otp = self.test_model(settings, seed_search)
-        return otp
-
-    def test_gated_attention_model_cv(
-        self,
-        n_hidden=3,
-        hidden_size=15,
-        encoding_size=10,
-        attention_hidden_size=10,
-        log_learning_rate=-3.0,
-        log_decay=-2.0,
-        seed_search=False,
-    ):
-        """Returns -minimal_loss (maximization is equivalent to loss minimization)
-
-        Args:
-            n_hidden (int, optional): _description_. Defaults to 3.
-            hidden_size (int, optional): _description_. Defaults to 15.
-            lr (float, optional): _description_. Defaults to 0.001.
-            decay (float, optional): _description_. Defaults to 0.01.
-        """
-
-        n_hidden = int(np.floor(n_hidden))
-        hidden_size = int(np.floor(hidden_size))
-        encoding_size = int(np.floor(encoding_size))
-        attention_hidden_size = int(np.floor(attention_hidden_size))
-
-        settings = {
-            "encoder": MLP_encoder,
-            "encoder_settings": {
-                "n_hidden": n_hidden,
-                "hidden_size": hidden_size,
-                "output_size": encoding_size,
-                "input_size": self.input_size,
-            },
-            "aggregator": GatedAttentionAggregation,
-            "aggregator_settings": {
-                "encoding_size": encoding_size,
-                "attention_hidden_size": attention_hidden_size,
-            },
-            "learning_rate": 10**log_learning_rate,
-            "decay": 10**log_decay,
-            "sparse": self.sparse,
-        }
-
-        otp = self.test_model_cv(settings, seed_search)
-        return otp
+        return losses[0]["seed"] if seed_search else -losses[0]["loss"]

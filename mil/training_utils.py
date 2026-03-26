@@ -254,7 +254,12 @@ def model_run(
         Tuple[List[float], List[float], int]: (train_loss_history, validation_loss_history, epoch_min_loss)
     """
     wandb.login()
-    run = wandb.init(project="lungcell_mil", dir=PROJECT_ROOT / "runs")
+    wandb_settings = wandb.Settings(
+        show_errors=True,  # Show error messages in the W&B App
+        silent=True,      # Disable all W&B console output
+        show_warnings=True # Show warning messages in the W&B App
+    )
+    run = wandb.init(project="lungcell_mil", dir=PROJECT_ROOT / "runs", settings=wandb_settings)
 
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
