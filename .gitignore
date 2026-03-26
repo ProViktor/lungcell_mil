@@ -11,3 +11,4 @@ data/hyper_optimization_runs/
 *.txt
 *.png
 notebooks/wandb/*
+runs/*

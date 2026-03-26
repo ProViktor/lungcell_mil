@@ -3,14 +3,13 @@ import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 
-from sklearn.metrics import balanced_accuracy_score
-
 import matplotlib.pyplot as plt
 
 from mil.CellsData import CellsData
 from mil.CustomDataloader import CustomLoader
 
-from mil.training_utils import model_run, set_seed, stratified_cv_split, get_sub_dataset
+from mil.training_utils import model_run, set_seed, stratified_cv_split
+from mil.schemas import RunParams
 
 from mil.models import (
     MIL_model,
@@ -118,6 +117,19 @@ class OptimizeHyper:
         if not verbose:
             ax = None
 
+        run_params = RunParams(
+            aggregator=aggregator.__name__,
+            n_hidden=encoder_settings["n_hidden"],
+            hidden_size=encoder_settings["hidden_size"],
+            encoding_size=encoder_settings["output_size"],
+            seed=seed,
+            lr=learning_rate,
+            decay=decay,
+            attention_hidden_size=aggregator_settings.get("attention_hidden_size"),
+            sparse=sparse,
+            num_epochs=num_epochs,
+        )
+
         train_loss, valid_loss, best_epoch = model_run(
             model=model,
             train_loader=train_loader,
@@ -132,6 +144,7 @@ class OptimizeHyper:
             plot_title="Training of MIL Classifier with Max Aggregation",
             save_weights=verbose,
             sparse=sparse,
+            run_params=run_params.model_dump(),
         )
 
         # classic loss
